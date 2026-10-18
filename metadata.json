@@ -1,0 +1,8 @@
+{
+  "name": "SPECTRA AI-TB",
+  "description": "Tuberculosis chest X-ray AI screening CAD system complying with MaHTAS/WHO screening guidelines",
+  "permissions": [],
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

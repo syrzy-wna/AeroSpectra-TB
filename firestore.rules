@@ -1,0 +1,47 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidScreening(data) {
+      return data.keys().hasAll(['id', 'patient_category', 'age', 'gender', 'result', 'created_at']) &&
+             data.id is string && data.id.size() <= 128 &&
+             data.patient_category is string && data.patient_category.size() <= 100 &&
+             data.age is int && data.age >= 0 && data.age <= 150 &&
+             data.gender is string && data.gender.size() <= 30 &&
+             data.created_at is string && data.created_at.size() <= 64 &&
+             data.result is map;
+    }
+
+    match /screenings/{screeningId} {
+      allow get: if isValidId(screeningId);
+      allow list: if true;
+      allow create: if isValidId(screeningId) && isValidScreening(incoming()) && incoming().id == screeningId;
+      allow update: if isValidId(screeningId) && isValidScreening(incoming()) && incoming().id == existing().id;
+      allow delete: if isValidId(screeningId);
+    }
+
+    match /cough_screenings/{coughId} {
+      allow get: if isValidId(coughId);
+      allow list: if true;
+      allow create: if isValidId(coughId) && isValidScreening(incoming()) && incoming().id == coughId;
+      allow update: if isValidId(coughId) && isValidScreening(incoming()) && incoming().id == existing().id;
+      allow delete: if isValidId(coughId);
+    }
+  }
+}

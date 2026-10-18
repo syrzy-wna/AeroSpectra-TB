@@ -1,0 +1,98 @@
+{
+  "entities": {
+    "Screening": {
+      "title": "Screening",
+      "description": "Tuberculosis Chest X-ray CAD Screening record with clinical stratification and CPG-grounded recommendations",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique screening identification UUID"
+        },
+        "patient_category": {
+          "type": "string",
+          "description": "Patient screening tier according to KKM high risk categories"
+        },
+        "age": {
+          "type": "integer",
+          "description": "Patient age in years"
+        },
+        "gender": {
+          "type": "string",
+          "description": "Patient biological sex (Lelaki / Perempuan)"
+        },
+        "image_base64": {
+          "type": "string",
+          "description": "Chest radiograph image payload or thumbnail"
+        },
+        "result": {
+          "type": "object",
+          "description": "CAD vision analysis results including pathology scores, severity, and CPG citations"
+        },
+        "created_at": {
+          "type": "string",
+          "description": "ISO 8601 screening timestamp"
+        },
+        "facility": {
+          "type": "string",
+          "description": "Healthcare facility (e.g. PKD Kuala Nerus / KKM)"
+        }
+      },
+      "required": ["id", "patient_category", "age", "gender", "result", "created_at"]
+    },
+    "CoughScreening": {
+      "title": "CoughScreening",
+      "description": "Acoustic cough screening record with DSP biomarkers, WHO symptoms, and Gemini clinical triage",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique cough screening UUID"
+        },
+        "patient_category": {
+          "type": "string",
+          "description": "Patient category"
+        },
+        "age": {
+          "type": "integer",
+          "description": "Patient age"
+        },
+        "gender": {
+          "type": "string",
+          "description": "Patient biological sex"
+        },
+        "who_symptoms": {
+          "type": "object",
+          "description": "WHO 4-symptom TB screening responses"
+        },
+        "dsp_telemetry": {
+          "type": "object",
+          "description": "Extracted DSP biomarkers (Peak Freq, Wetness, Centroid, ZCR, SNR)"
+        },
+        "result": {
+          "type": "object",
+          "description": "Gemini Multimodal acoustic triage result and recommendations"
+        },
+        "created_at": {
+          "type": "string",
+          "description": "ISO 8601 timestamp"
+        },
+        "facility": {
+          "type": "string",
+          "description": "Healthcare facility"
+        }
+      },
+      "required": ["id", "patient_category", "age", "gender", "result", "created_at"]
+    }
+  },
+  "firestore": {
+    "/screenings/{screeningId}": {
+      "schema": "Screening",
+      "description": "Collection of clinical TB CAD CXR screenings and triage decisions"
+    },
+    "/cough_screenings/{coughId}": {
+      "schema": "CoughScreening",
+      "description": "Collection of AeroTriage TB acoustic cough triage records"
+    }
+  }
+}

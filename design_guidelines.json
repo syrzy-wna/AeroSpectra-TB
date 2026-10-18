@@ -1,0 +1,84 @@
+{
+  "theme": "Light",
+  "archetype": "1 (Organic & Earthy) - Modified for Clinical Precision",
+  "brand_identity": {
+    "primary_color": "#0F7650",
+    "tone": "Professional, clinical, trustworthy, precise.",
+    "target_audience": "Medical officers in rural clinics (Malaysia) - field usage on tablets/desktop."
+  },
+  "colors": {
+    "background": "#F8F9FA",
+    "surface": "#FFFFFF",
+    "primary": "#0F7650",
+    "primary_hover": "#0C5D40",
+    "text_primary": "#1A202C",
+    "text_secondary": "#4A5568",
+    "border": "#E2E8F0",
+    "severity": {
+      "NO_LESION": "#10B981",
+      "MINIMAL": "#F59E0B",
+      "MODERATE": "#F97316",
+      "SEVERE": "#EF4444"
+    }
+  },
+  "typography": {
+    "headings_font": "Work Sans",
+    "body_font": "IBM Plex Sans",
+    "rules": [
+      "Headings (Work Sans): tracking-tight for sizes above 24px.",
+      "Body (IBM Plex Sans): leading-relaxed for clinical reports.",
+      "Overlines/Labels: Uppercase, tiny (text-xs), wide spacing (tracking-[0.1em]).",
+      "Do NOT use Inter or generic sans."
+    ]
+  },
+  "layout_and_spacing": {
+    "grid_strategy": "Control Room Grid (Dense, Data Correlation).",
+    "spacing_scale": "Tight gaps (gap-4 or gap-6) between widgets, generous internal padding (p-6) in cards.",
+    "borders_and_radius": "Flat solid surfaces, subtle 1px border (border-border), rounded-md (6px) or rounded-lg (8px) max. No glassmorphism."
+  },
+  "components": {
+    "cards": "Flat background, 1px border. Hover state adds shadow-sm. No default heavy shadows to maintain a clean clinical look.",
+    "buttons": "Primary button uses #0F7650. MUST define hover state text color (hover:text-white).",
+    "forms": "Use Shadcn Form, Input, Select. Labels left-aligned. Input fields strictly rectangular with soft corners.",
+    "badges": "Severity badges must use respective severity colors for background (at 10-20% opacity) and 100% opacity text for contrast (e.g., bg-red-100 text-red-700).",
+    "xray_viewer": "Interactive multi-modal canvas. Bounding box annotations overlaying image. Support drag/drop and camera capture. Bounding boxes must use high-contrast stroke.",
+    "charts": "Recharts radar/bar chart for pathology scores. Minimalist styling, strict grid lines, clear tooltips."
+  },
+  "motion": {
+    "rules": "Minimalist. Shimmer loaders for AI processing (vital for clinical trust). No bouncy or playful animations. Use standard 0.2s ease transitions for hover states."
+  },
+  "icons": {
+    "library": "lucide-react"
+  },
+  "page_structures": {
+    "new_screening": {
+      "layout": "2-column split (desktop) or stack (mobile). Left: Patient intake form. Right: Drag-and-drop X-ray upload area / Camera capture.",
+      "behavior": "Post-upload, right side shifts to X-ray viewer and AI analysis results."
+    },
+    "history_dashboard": {
+      "layout": "Data-dense list or table. Rows must include: thumbnail, patient category, age, gender, date, and severity badge.",
+      "behavior": "Clicking a row navigates to Screening Detail."
+    },
+    "screening_detail": {
+      "layout": "Bento grid (Control Room mode). Left large column: Annotated X-ray Viewer. Right column: AI results, pathology breakdown chart, and EN/BM report tab toggle. Top right: Delete record action."
+    }
+  },
+  "image_urls": {
+    "login_background": {
+      "url": "https://images.unsplash.com/photo-1576091160550-2173dba999ef?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2OTV8MHwxfHNlYXJjaHwxfHxtZWRpY2FsJTIwY2xpbmljfGVufDB8fHx8MTc4MjkxOTE4NXww&ixlib=rb-4.1.0&q=85",
+      "description": "Person sitting while using laptop computer and green stethoscope near (subtle medical background, if needed for auth)."
+    }
+  },
+  "accessibility_and_testing": {
+    "contrast": "Ensure text over colored severity badges meets WCAG AA standards.",
+    "testing_attributes": "All interactive and key informational elements MUST include a data-testid attribute (e.g., data-testid='upload-xray', data-testid='severity-badge')."
+  },
+  "instructions_to_main_agent": [
+    "Build the UI using React (.js and .jsx files, NOT TypeScript), Tailwind CSS, and shadcn/ui components.",
+    "Use Recharts for the pathology breakdown visualization.",
+    "Ensure fully responsive behavior (usable on rural clinic tablets).",
+    "Maintain strict clinical tone: No playful animations, zero glassmorphism, flat data surfaces.",
+    "Implement EN/BM toggle functionality for the clinical report.",
+    "Ensure the X-ray viewer can display bounding box data over the image."
+  ]
+}
