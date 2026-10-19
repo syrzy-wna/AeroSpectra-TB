@@ -2,7 +2,7 @@ import { useState, useRef } from "react";
 import { ZoomIn, ZoomOut, RotateCcw, Eye, EyeOff, Sliders, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-const XrayViewer = ({ imageSrc, annotations = [] }) => {
+const XrayViewer = ({ imageSrc, annotations = [], isVerified = false }) => {
   const [zoom, setZoom] = useState(1);
   const [showAnnotations, setShowAnnotations] = useState(true);
   const [filterMode, setFilterMode] = useState("standard"); // 'standard' | 'invert' | 'lung' | 'bone'
@@ -34,8 +34,10 @@ const XrayViewer = ({ imageSrc, annotations = [] }) => {
       {/* Top Toolbar */}
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 bg-slate-900/90 px-3 py-2 text-xs">
         <div className="flex items-center gap-1.5 font-mono text-slate-400">
-          <Sliders className="h-3.5 w-3.5 text-emerald-400" />
-          <span>VIEWPORT // DICOM CXR</span>
+          <Sliders className={`h-3.5 w-3.5 ${isVerified ? "text-emerald-400" : "text-amber-400"}`} />
+          <span className={isVerified ? "text-slate-300" : "text-amber-300 font-bold"}>
+            {isVerified ? "VIEWPORT // DICOM CXR" : "UNVERIFIED INPUT"}
+          </span>
           <span className="text-slate-600">·</span>
           <span className="text-slate-300">{(zoom * 100).toFixed(0)}%</span>
         </div>
@@ -178,7 +180,9 @@ const XrayViewer = ({ imageSrc, annotations = [] }) => {
 
         {/* Viewport HUD Metadata Watermark */}
         <div className="pointer-events-none absolute bottom-3 left-3 font-mono text-[11px] text-slate-400/80">
-          <span>PA VIEW · DIGITAL RADIOGRAPHY</span>
+          <span className={isVerified ? "" : "rounded bg-amber-950/90 px-2 py-0.5 text-amber-300 font-bold border border-amber-500/50"}>
+            {isVerified ? "PA VIEW · DIGITAL RADIOGRAPHY" : "UNVERIFIED INPUT"}
+          </span>
         </div>
       </div>
 

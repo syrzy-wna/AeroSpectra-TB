@@ -1,4 +1,4 @@
-import { Sparkles, AlertCircle, CheckCircle2, Flame } from "lucide-react";
+import { Sparkles, AlertCircle, CheckCircle2, Flame, ShieldAlert } from "lucide-react";
 import { generateSyntheticCoughAudio } from "@/utils/audioDsp";
 
 export const CoughDemoPresets = ({ onSelectPreset, disabled }) => {
@@ -31,7 +31,7 @@ export const CoughDemoPresets = ({ onSelectPreset, disabled }) => {
       },
       patient: {
         patient_category: "Kontak Rapat",
-        age: 46,
+        age: "46",
         gender: "Lelaki",
       },
     },
@@ -63,7 +63,7 @@ export const CoughDemoPresets = ({ onSelectPreset, disabled }) => {
       },
       patient: {
         patient_category: "Patient",
-        age: 31,
+        age: "31",
         gender: "Perempuan",
       },
     },
@@ -95,7 +95,39 @@ export const CoughDemoPresets = ({ onSelectPreset, disabled }) => {
       },
       patient: {
         patient_category: "Screening",
-        age: 24,
+        age: "24",
+        gender: "Lelaki",
+      },
+    },
+    {
+      id: "invalid_speech",
+      title: "Kes 4: Uji Safety Gate #0 (Percakapan / Angin)",
+      badge: "SAFETY GATE #0 TEST",
+      badgeColor: "bg-slate-200 text-slate-800 border-slate-400",
+      icon: ShieldAlert,
+      iconColor: "text-slate-700",
+      description: "Isyarat percakapan manusia / deruan angin berterusan — ditolak oleh validateAcousticInput().",
+      symptoms: {
+        cough_more_than_2_weeks: false,
+        fever: false,
+        night_sweats: false,
+        unexplained_weight_loss: false,
+        hemoptysis: false,
+        tb_contact_history: false,
+      },
+      dsp: {
+        peak_frequency_hz: 180,
+        spectral_centroid_hz: 410,
+        zero_crossing_rate: 0.032,
+        cough_wetness_index: 5,
+        snr_db: 12,
+        cough_burst_count: 0,
+        duration_ms: 2000,
+        rms_energy: 0.24,
+      },
+      patient: {
+        patient_category: "Screening",
+        age: "35",
         gender: "Lelaki",
       },
     },
@@ -120,10 +152,10 @@ export const CoughDemoPresets = ({ onSelectPreset, disabled }) => {
         </h4>
       </div>
       <p className="text-[11px] text-slate-500 mb-3">
-        Pilih profil akustik batuk di bawah untuk mensintesis gelombang audio dan telemetri DSP serta-merta di atas pentas demonstrasi:
+        Pilih profil akustik batuk di bawah untuk mensintesis gelombang audio, telemetri DSP, dan menguji Penapis Keselamatan Audio #0:
       </p>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         {PRESETS.map((p) => {
           const Icon = p.icon;
           return (

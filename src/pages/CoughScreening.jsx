@@ -5,12 +5,10 @@ import {
   Mic,
   RotateCcw,
   Sparkles,
-  ShieldCheck,
   Loader2,
   BookOpen,
-  ArrowRight,
   Radio,
-  FileCheck,
+  AlertCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { LOGOS } from "@/constants/logos";
@@ -21,6 +19,9 @@ import CoughDemoPresets from "@/components/cough/CoughDemoPresets";
 import CoughResultPanel from "@/components/cough/CoughResultPanel";
 import PatientForm from "@/components/screening/PatientForm";
 import api from "@/lib/api";
+import { calculateTriageIndex } from "@/lib/triageFusionEngine";
+import { generateFhirReport } from "@/lib/fhirExporter";
+import { saveScreeningOffline, syncToFirestore } from "@/lib/offlineSyncManager";
 
 const initialForm = {
   patient_category: "Patient",
@@ -47,42 +48,75 @@ export const CoughScreening = () => {
   const [demoDsp, setDemoDsp] = useState(null);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
+  const [triageOutcome, setTriageOutcome] = useState(null);
+  const [offlineSaved, setOfflineSaved] = useState(false);
   const [error, setError] = useState(null);
 
-  const handleFormChange = (e) => {
-    const { name, value } = e.target;
-    setForm((prev) => ({ ...prev, [name]: value }));
+  // PatientForm passes (key, value)
+  const handleFormChange = (key, value) => {
+    setForm((prev) => ({ ...prev, [key]: value }));
   };
 
   const handleSelectPreset = (preset) => {
-    setForm(preset.patient);
+    setForm({
+      patient_category: preset.patient.patient_category,
+      age: String(preset.patient.age),
+      gender: preset.patient.gender,
+    });
     setSymptoms(preset.symptoms);
     setDemoDsp(preset.dsp);
     setDemoBlob(preset.audioBlob);
     setResult(null);
+    setTriageOutcome(null);
+    setOfflineSaved(false);
     setError(null);
   };
 
   const handleAudioCaptured = (audioData) => {
     setCapturedAudio(audioData);
     setResult(null);
+    setTriageOutcome(null);
+    setOfflineSaved(false);
     setError(null);
   };
 
   const handleAnalyzeCough = async () => {
     if (!capturedAudio) {
-      alert("Sila rakam batuk pesakit atau pilih salah satu senario demonstrasi terlebih dahulu.");
+      setError(
+        "Sila rakam batuk pesakit, muat naik fail audio, atau pilih salah satu senario demonstrasi di atas terlebih dahulu."
+      );
+      return;
+    }
+
+    // MODUL 1: Enforce Acoustic Safety Directive #0
+    if (capturedAudio.safetyGate && capturedAudio.safetyGate.status === "REJECTED") {
+      setResult({
+        status: "REJECTED",
+        error_code: capturedAudio.safetyGate.error_code || "INVALID_AUDIO_INPUT",
+        message:
+          capturedAudio.safetyGate.message ||
+          "RALAT PENGESAHAN AKUSTIK: Isyarat berbunyi seperti percakapan manusia (harmonik berterusan) atau deruan angin latar belakang.",
+      });
+      setTriageOutcome(null);
       return;
     }
 
     setLoading(true);
     setError(null);
 
+    const activeDsp = capturedAudio.dsp || demoDsp || {
+      peak_frequency_hz: 320,
+      cough_burst_count: 2,
+      cough_wetness_index: 65,
+      zero_crossing_rate: 0.09,
+      duration_ms: 1800,
+    };
+
     try {
       const payload = {
         audio_base64: capturedAudio.base64,
         audio_mime_type: capturedAudio.mimeType,
-        dsp_telemetry: capturedAudio.dsp || demoDsp,
+        dsp_telemetry: activeDsp,
         who_symptoms: symptoms,
         patient_category: form.patient_category,
         age: Number(form.age) || 40,
@@ -90,10 +124,44 @@ export const CoughScreening = () => {
       };
 
       const res = await api.post("/analyze-cough", payload);
-      setResult(res.data);
+      const finalResult = res.data;
+      setResult(finalResult);
+
+      // MODUL 2: Calculate Unified Triage Index
+      const baselineCxrEstimate =
+        finalResult.triage_category === "HIGH_RISK_TB_SUSPECT"
+          ? 75
+          : finalResult.triage_category === "MODERATE_RESPIRATORY_RISK"
+          ? 45
+          : 15;
+      const fused = calculateTriageIndex(
+        baselineCxrEstimate,
+        activeDsp,
+        form.patient_category
+      );
+      setTriageOutcome(fused);
+
+      // MODUL 4: Save Offline-First in IndexedDB & trigger Firestore Sync
+      const recordId = `cough-${Date.now()}`;
+      const saved = await saveScreeningOffline({
+        id: recordId,
+        type: "COUGH",
+        patient_category: form.patient_category,
+        age: Number(form.age) || 40,
+        gender: form.gender,
+        result: {
+          ...finalResult,
+          unified_triage: fused,
+          dsp_telemetry: activeDsp,
+          who_symptoms: symptoms,
+        },
+        created_at: new Date().toISOString(),
+        facility: "Pejabat Kesihatan Daerah Kuala Nerus · KKM",
+      });
+      setOfflineSaved(saved);
+      syncToFirestore().catch(() => {});
     } catch (err) {
       console.error("Cough analysis error:", err);
-      // Fallback rule-based simulation if API errors
       const whoCount = [
         symptoms.cough_more_than_2_weeks,
         symptoms.fever,
@@ -104,9 +172,9 @@ export const CoughScreening = () => {
       const isHigh =
         whoCount >= 2 ||
         symptoms.cough_more_than_2_weeks ||
-        (capturedAudio.dsp && capturedAudio.dsp.cough_wetness_index > 65);
+        (activeDsp && activeDsp.cough_wetness_index > 65);
 
-      setResult({
+      const fallbackResult = {
         triage_category: isHigh
           ? "HIGH_RISK_TB_SUSPECT"
           : whoCount === 1
@@ -115,17 +183,47 @@ export const CoughScreening = () => {
         confidence_score: isHigh ? 91 : 78,
         differential_diagnoses: isHigh
           ? [
-              { disease: "Pulmonary Tuberculosis", probability: 84, rationale: "Wet cough with late expulsive phase and positive WHO symptom screening." },
-              { disease: "Post-Infectious Bronchiectasis", probability: 11, rationale: "Productive mucus clearing." },
-              { disease: "Bacterial Pneumonia", probability: 5, rationale: "Possible airspace consolidation." },
+              {
+                disease: "Pulmonary Tuberculosis",
+                probability: 84,
+                rationale:
+                  "Wet cough with late expulsive phase and positive WHO symptom screening.",
+              },
+              {
+                disease: "Post-Infectious Bronchiectasis",
+                probability: 11,
+                rationale: "Productive mucus clearing.",
+              },
+              {
+                disease: "Bacterial Pneumonia",
+                probability: 5,
+                rationale: "Possible airspace consolidation.",
+              },
             ]
           : [
-              { disease: "Acute Viral Bronchitis", probability: 68, rationale: "Dry paroxysmal cough with high-pitched tracheal friction." },
-              { disease: "Upper Airway Cough Syndrome", probability: 22, rationale: "Post-nasal drip irritation." },
-              { disease: "Pulmonary Tuberculosis", probability: 10, rationale: "Low initial baseline suspicion." },
+              {
+                disease: "Acute Viral Bronchitis",
+                probability: 68,
+                rationale:
+                  "Dry paroxysmal cough with high-pitched tracheal friction.",
+              },
+              {
+                disease: "Upper Airway Cough Syndrome",
+                probability: 22,
+                rationale: "Post-nasal drip irritation.",
+              },
+              {
+                disease: "Pulmonary Tuberculosis",
+                probability: 10,
+                rationale: "Low initial baseline suspicion.",
+              },
             ],
         priority_lab_tests: isHigh
-          ? ["GeneXpert MTB/RIF Ultra", "PA Chest Radiograph (CXR)", "Sputum AFB Smear x2"]
+          ? [
+              "GeneXpert MTB/RIF Ultra",
+              "PA Chest Radiograph (CXR)",
+              "Sputum AFB Smear x2",
+            ]
           : ["Oral Hydration & Expectorant", "Interval 14-day Observation"],
         patient_advice: {
           bm: isHigh
@@ -145,10 +243,78 @@ export const CoughScreening = () => {
           reason: "High suspicion of active pulmonary TB under Act 342.",
           target: "Pejabat Kesihatan Daerah (PKD)",
         },
-      });
+      };
+
+      setResult(fallbackResult);
+      const fused = calculateTriageIndex(
+        isHigh ? 75 : 20,
+        activeDsp,
+        form.patient_category
+      );
+      setTriageOutcome(fused);
     } finally {
       setLoading(false);
     }
+  };
+
+  // MODUL 3: Export HL7 FHIR R4 Bundle for Acoustic Triage
+  const handleExportFhir = () => {
+    if (!result) return;
+    const activeDsp = capturedAudio?.dsp || demoDsp || {};
+    const fhirBundle = generateFhirReport(
+      {
+        id: `cough-${Date.now()}`,
+        age: Number(form.age) || 40,
+        gender: form.gender,
+        patient_category: form.patient_category,
+      },
+      triageOutcome || (result.triage_category === "HIGH_RISK_TB_SUSPECT" ? 82 : 30),
+      {
+        screening_id: `aerotriage-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        cxr_score: triageOutcome ? Math.round(triageOutcome.breakdown.cxr_component / 0.6) : 50,
+        cxr_severity: result.triage_category,
+        cough_peak_hz: activeDsp.peak_frequency_hz || 310,
+        cough_wetness_index: activeDsp.cough_wetness_index || 75,
+        radiological_impression: [
+          result.clinical_notes?.en || "Acoustic Cough Triage Evaluation completed.",
+        ],
+        cpg_recommendations: result.priority_lab_tests || [],
+      }
+    );
+
+    const blob = new Blob([JSON.stringify(fhirBundle, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `fhir-aerotriage-${Date.now().toString().slice(-6)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleProceedToCxr = () => {
+    const activeDsp = capturedAudio?.dsp || demoDsp || {
+      peak_frequency_hz: 310,
+      cough_burst_count: 3,
+      cough_wetness_index: 84,
+    };
+    try {
+      sessionStorage.setItem(
+        "aerotriage_cough_session",
+        JSON.stringify({
+          patient: form,
+          dsp: activeDsp,
+          symptoms,
+          coughResult: result,
+          timestamp: new Date().toISOString(),
+        })
+      );
+    } catch {
+      // ignore storage errors
+    }
+    navigate("/");
   };
 
   const handleReset = () => {
@@ -156,6 +322,8 @@ export const CoughScreening = () => {
     setDemoBlob(null);
     setDemoDsp(null);
     setResult(null);
+    setTriageOutcome(null);
+    setOfflineSaved(false);
     setError(null);
   };
 
@@ -191,7 +359,7 @@ export const CoughScreening = () => {
           </Link>
           <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground">
             <Radio className="h-4 w-4 text-emerald-600 animate-pulse" />
-            <span>Web Audio DSP Active</span>
+            <span>Web Audio DSP + Safety Gate #0 Active</span>
           </div>
         </div>
       </div>
@@ -228,9 +396,6 @@ export const CoughScreening = () => {
         {/* Left Column: Demographics + Noise Floor + WHO Symptoms */}
         <div className="space-y-5">
           <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-xs space-y-4">
-            <h3 className="font-heading text-sm font-bold text-slate-900 border-b border-slate-100 pb-2">
-              Demografi Pesakit
-            </h3>
             <PatientForm form={form} onChange={handleFormChange} disabled={loading} />
           </div>
 
@@ -254,6 +419,13 @@ export const CoughScreening = () => {
             demoAudioBlob={demoBlob}
             demoDspTelemetry={demoDsp}
           />
+
+          {error && (
+            <div className="flex items-center gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2.5 text-xs font-medium text-red-800">
+              <AlertCircle className="h-4 w-4 text-red-600 shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
 
           {/* Analyze Button & Actions */}
           <div className="flex items-center gap-3">
@@ -292,9 +464,10 @@ export const CoughScreening = () => {
           {result && (
             <CoughResultPanel
               result={result}
-              onProceedToCxr={() => {
-                // Navigate to CXR module with same patient tier
-              }}
+              triageOutcome={triageOutcome}
+              offlineSaved={offlineSaved}
+              onExportFhir={handleExportFhir}
+              onProceedToCxr={handleProceedToCxr}
             />
           )}
         </div>

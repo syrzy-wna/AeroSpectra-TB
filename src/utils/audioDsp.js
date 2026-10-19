@@ -22,14 +22,28 @@ export class AudioEngine {
 
   async startMicStream() {
     await this.init();
+    if (typeof navigator === "undefined" || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      throw new Error("MEDIA_DEVICES_NOT_SUPPORTED");
+    }
+
     if (!this.mediaStream) {
-      this.mediaStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
-        },
-      });
+      try {
+        // Standard constraint works across all browsers including mobile Safari and Chrome
+        this.mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (err1) {
+        // Fallback attempt with minimal parameters if exact device matching failed
+        console.warn("First mic stream attempt failed, attempting fallback audio constraints:", err1);
+        try {
+          this.mediaStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: false,
+              noiseSuppression: false,
+            },
+          });
+        } catch (err2) {
+          throw err1; // Throw original error for clean diagnostics
+        }
+      }
     }
 
     this.analyser = this.audioContext.createAnalyser();
@@ -54,10 +68,23 @@ export class AudioEngine {
     this.audioChunks = [];
     this.isRecording = true;
 
-    // Use webm or mp4 audio
-    let mimeType = "audio/webm";
-    if (!MediaRecorder.isTypeSupported("audio/webm")) {
-      mimeType = MediaRecorder.isTypeSupported("audio/mp4") ? "audio/mp4" : "";
+    // Detect optimal supported audio MIME type across Chrome, Safari, iOS, Firefox
+    let mimeType = "";
+    if (typeof MediaRecorder !== "undefined" && typeof MediaRecorder.isTypeSupported === "function") {
+      const candidates = [
+        "audio/webm;codecs=opus",
+        "audio/webm",
+        "audio/mp4",
+        "audio/aac",
+        "audio/ogg",
+        "audio/wav",
+      ];
+      for (const candidate of candidates) {
+        if (MediaRecorder.isTypeSupported(candidate)) {
+          mimeType = candidate;
+          break;
+        }
+      }
     }
 
     const options = mimeType ? { mimeType } : undefined;
@@ -189,6 +216,23 @@ export function extractDspBiomarkers(timeDomainData, frequencyData, sampleRate =
 // ----------------------------- Web Audio Synthesizer (Stage-Proof Demo Simulation) -----------------------------
 
 export function generateSyntheticCoughAudio(preset = "high_risk", sampleRate = 44100) {
+  // Special preset for testing MODUL 1: Acoustic Safety Directive #0 (Sustained Human Speech / Wind Artifact)
+  if (preset === "invalid_speech") {
+    const durationSec = 2.0;
+    const numSamples = Math.floor(sampleRate * durationSec);
+    const buffer = new Float32Array(numSamples);
+    // Sustained harmonic speech-like formant signal across >85% of frames (triggers speech/wind rejection gate)
+    for (let i = 0; i < numSamples; i++) {
+      const t = i / sampleRate;
+      const formant1 = Math.sin(2 * Math.PI * 180 * t) * 0.35;
+      const formant2 = Math.sin(2 * Math.PI * 540 * t) * 0.25;
+      const formant3 = Math.sin(2 * Math.PI * 1200 * t) * 0.15;
+      const steadyModulation = 0.85 + 0.15 * Math.sin(2 * Math.PI * 3 * t);
+      buffer[i] = (formant1 + formant2 + formant3) * steadyModulation * 0.5;
+    }
+    return float32ToWavBlob(buffer, sampleRate);
+  }
+
   const durationSec = preset === "healthy" ? 0.9 : preset === "bronchitis" ? 1.4 : 2.2;
   const numSamples = Math.floor(sampleRate * durationSec);
   const buffer = new Float32Array(numSamples);
@@ -222,13 +266,27 @@ export function generateSyntheticCoughAudio(preset = "high_risk", sampleRate = 4
       // Turbulent noise
       const noise = (Math.random() * 2 - 1) * (1 - wetness * 0.5);
 
-      const sample = (osc1 * 0.4 + osc2 * 0.2 + osc3 * 0.3 + noise * 0.3) * envelope * 0.7;
+      const sample = (osc1 * 0.4 + osc2 * 0.2 + osc3 * 0.3 + noise * 0.3) * envelope * 0.85;
       buffer[burstStart + i] += sample;
     }
   }
 
   // Convert Float32Array to 16-bit PCM WAV Blob
   return float32ToWavBlob(buffer, sampleRate);
+}
+
+export async function decodeBlobToAudioBuffer(blob) {
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  const ctx = new AudioCtx();
+  try {
+    const arrayBuffer = await blob.arrayBuffer();
+    const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+    return audioBuffer;
+  } finally {
+    if (ctx.state !== "closed" && typeof ctx.close === "function") {
+      ctx.close().catch(() => {});
+    }
+  }
 }
 
 function float32ToWavBlob(samples, sampleRate) {
@@ -268,4 +326,50 @@ function writeString(view, offset, string) {
   for (let i = 0; i < string.length; i++) {
     view.setUint8(offset + i, string.charCodeAt(i));
   }
+}
+
+/**
+ * Decodes an uploaded or captured audio file (WAV, MP3, M4A, WEBM, OGG)
+ * into PCM data, extracting real client-side DSP biomarkers and wave arrays.
+ */
+export async function decodeAudioFileToData(file) {
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  const ctx = new AudioCtx();
+  const arrayBuffer = await file.arrayBuffer();
+  const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+
+  const channelData = audioBuffer.getChannelData(0);
+  const sampleRate = audioBuffer.sampleRate;
+
+  // Extract wave and frequency representations for canvas rendering
+  const fftSize = 2048;
+  const timeData = new Uint8Array(fftSize);
+  const freqData = new Uint8Array(fftSize / 2);
+
+  const step = Math.max(1, Math.floor(channelData.length / fftSize));
+  for (let i = 0; i < fftSize; i++) {
+    const s = channelData[Math.min(i * step, channelData.length - 1)];
+    timeData[i] = Math.min(255, Math.max(0, Math.round(128 + s * 127)));
+  }
+
+  for (let i = 0; i < freqData.length; i++) {
+    const s1 = channelData[Math.min(i * 2, channelData.length - 1)];
+    freqData[i] = Math.min(255, Math.max(0, Math.round(Math.abs(s1) * 255)));
+  }
+
+  const dsp = extractDspBiomarkers(timeData, freqData, sampleRate);
+  const base64 = await blobToBase64(file);
+  const audioUrl = URL.createObjectURL(file);
+
+  return {
+    blob: file,
+    base64,
+    audioUrl,
+    mimeType: file.type || "audio/wav",
+    dsp,
+    timeData,
+    freqData,
+    sampleRate,
+    audioBuffer,
+  };
 }

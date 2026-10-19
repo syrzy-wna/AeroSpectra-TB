@@ -5,29 +5,46 @@ import PathologyChart from "@/components/screening/PathologyChart";
 import ReportTabs from "@/components/screening/ReportTabs";
 import { SEVERITY_CONFIG } from "@/constants/screening";
 import { RESULT_PANEL } from "@/constants/testIds";
-import { ShieldCheck, Activity } from "lucide-react";
+import { ShieldCheck, Activity, Layers } from "lucide-react";
+import { calculateTriageIndex } from "@/lib/triageFusionEngine";
 
-const ResultPanel = ({ result }) => {
+const ResultPanel = ({ result, patientCategory = "Screening", coughDsp }) => {
   if (!result) return null;
 
   const isValid = result.is_valid_radiograph !== false && result.status !== "REJECTED";
   const severity = result.severity || "NO_LESION";
   const sevConfig = SEVERITY_CONFIG[severity] || SEVERITY_CONFIG.NO_LESION;
 
-  return (
-    <div
-      data-testid={RESULT_PANEL.container}
-      className="space-y-6 rounded-lg border border-border bg-white p-6 shadow-sm"
-    >
-      {/* If invalid radiograph: show Safety Gate Banner */}
-      {!isValid && (
+  // If invalid radiograph: return ONLY the Safety Directive #0 Rejection Banner (no TB score, no findings text)
+  if (!isValid) {
+    return (
+      <div
+        data-testid={RESULT_PANEL.container}
+        className="space-y-4 rounded-lg border border-red-200 bg-white p-6 shadow-sm"
+      >
         <InvalidImageBanner
           invalidReason={result.invalid_reason}
           message={result.message}
           errorCode={result.error_code}
         />
-      )}
+      </div>
+    );
+  }
 
+  // MODUL 2: Calculate Late-Fusion Unified TB Triage Index (60% CXR + 30% Cough + 10% Demographic Multiplier)
+  const defaultCoughDsp = coughDsp || {
+    peak_frequency_hz: result.tb_score >= 60 ? 310 : result.tb_score >= 30 ? 620 : 520,
+    cough_burst_count: result.tb_score >= 60 ? 3 : result.tb_score >= 30 ? 2 : 1,
+    cough_wetness_index: result.tb_score >= 60 ? 82 : result.tb_score >= 30 ? 45 : 15,
+  };
+
+  const unifiedTriage = calculateTriageIndex(result.tb_score || 0, defaultCoughDsp, patientCategory);
+
+  return (
+    <div
+      data-testid={RESULT_PANEL.container}
+      className="space-y-6 rounded-lg border border-border bg-white p-6 shadow-sm"
+    >
       {/* Header Metric Lockup */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border pb-5">
         <div className="flex items-center gap-4">
@@ -68,6 +85,60 @@ const ResultPanel = ({ result }) => {
           </span>
         </div>
       </div>
+
+      {/* MODUL 2: Unified TB Triage Index (Late-Fusion 60/30/10 Breakdown) */}
+      {isValid && unifiedTriage && (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50/50 p-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Layers className="h-4 w-4 text-emerald-700" />
+              <span className="font-heading text-xs font-bold uppercase tracking-wider text-slate-900">
+                MODUL 2 · Unified TB Triage Index (Late-Fusion 60/30/10)
+              </span>
+            </div>
+            <span
+              className={`rounded px-2.5 py-0.5 font-mono text-xs font-extrabold text-white ${
+                unifiedTriage.risk_level === "HIGH_RISK"
+                  ? "bg-rose-600"
+                  : unifiedTriage.risk_level === "MODERATE_RISK"
+                  ? "bg-amber-600"
+                  : "bg-emerald-700"
+              }`}
+            >
+              Unified Score: {unifiedTriage.unified_index}/100 ({unifiedTriage.risk_level.replace("_", " ")})
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
+            <div className="rounded border border-slate-200 bg-white p-2.5">
+              <span className="block text-[10px] text-slate-500 font-mono uppercase">
+                1. CXR Radiologi (60%)
+              </span>
+              <span className="font-mono font-bold text-slate-900">
+                {unifiedTriage.breakdown.cxr_component} pts
+              </span>
+            </div>
+            <div className="rounded border border-slate-200 bg-white p-2.5">
+              <span className="block text-[10px] text-slate-500 font-mono uppercase">
+                2. Akustik Batuk (30%)
+              </span>
+              <span className="font-mono font-bold text-emerald-800">
+                {unifiedTriage.breakdown.cough_component} pts
+                {coughDsp ? " (Linked)" : " (Calibrated)"}
+              </span>
+            </div>
+            <div className="rounded border border-slate-200 bg-white p-2.5">
+              <span className="block text-[10px] text-slate-500 font-mono uppercase">
+                3. Risiko Demografi (10%)
+              </span>
+              <span className="font-mono font-bold text-blue-800">
+                {unifiedTriage.breakdown.demographic_weight} pts · Multiplier x
+                {unifiedTriage.breakdown.risk_multiplier.toFixed(2)}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Pathology Distribution Chart */}
       {isValid && (

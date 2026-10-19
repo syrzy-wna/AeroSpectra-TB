@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { Toaster } from "@/components/ui/toaster";
 import Navbar from "@/components/screening/Navbar";
@@ -8,8 +9,14 @@ import Settings from "@/pages/Settings";
 import HowToUse from "@/pages/HowToUse";
 import CoughScreening from "@/pages/CoughScreening";
 import { Activity } from "lucide-react";
+import { initOfflineSyncWatcher } from "@/lib/offlineSyncManager";
 
 function App() {
+  useEffect(() => {
+    const cleanup = initOfflineSyncWatcher();
+    return () => cleanup();
+  }, []);
+
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-foreground antialiased selection:bg-emerald-100 selection:text-emerald-900">
       <BrowserRouter>

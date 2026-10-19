@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
-import { ArrowLeft, Trash2, FileDown, Loader2 } from "lucide-react";
+import { ArrowLeft, Trash2, FileDown, Loader2, FileCode } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -21,6 +21,7 @@ import api from "@/lib/api";
 import { downloadElementAsPdf } from "@/lib/pdfGenerator";
 import { DETAIL } from "@/constants/testIds";
 import { deleteScreeningFromFirestore } from "@/lib/firebase";
+import { generateFhirReport } from "@/lib/fhirExporter";
 
 const ScreeningDetail = () => {
   const { id } = useParams();
@@ -62,6 +63,38 @@ const ScreeningDetail = () => {
     } finally {
       setDownloadingPdf(false);
     }
+  };
+
+  const handleExportFhir = () => {
+    if (!screening) return;
+    const fhirBundle = generateFhirReport(
+      {
+        id: screening.id,
+        age: screening.age,
+        gender: screening.gender,
+        patient_category: screening.patient_category,
+      },
+      screening.result?.tb_score || 50,
+      {
+        screening_id: screening.id,
+        timestamp: screening.created_at,
+        cxr_score: screening.result?.tb_score || 0,
+        cxr_severity: screening.result?.severity || "NO_LESION",
+        pathology_scores: screening.result?.pathology_scores,
+        radiological_impression: screening.result?.en?.impression || screening.result?.bm?.impresi,
+        cpg_recommendations: screening.result?.en?.recommendation || screening.result?.bm?.cadangan,
+      }
+    );
+
+    const blob = new Blob([JSON.stringify(fhirBundle, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `fhir-report-${screening.id.slice(0, 8)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   if (notFound) {
@@ -124,6 +157,17 @@ const ScreeningDetail = () => {
                 Download PDF
               </Button>
 
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleExportFhir}
+                className="text-xs border-slate-300 hover:border-emerald-500 hover:text-emerald-900"
+                title="Eksport bundle format HL7 FHIR R4 JSON untuk integrasi HIS/EMR"
+              >
+                <FileCode className="mr-2 h-4 w-4 text-emerald-700" />
+                Export HL7 FHIR
+              </Button>
+
               <AlertDialog>
                 <AlertDialogTrigger asChild>
                   <Button
@@ -164,6 +208,7 @@ const ScreeningDetail = () => {
             <XrayViewer
               imageSrc={screening.image_base64}
               annotations={screening.result?.annotations || []}
+              isVerified={screening.result?.is_valid_radiograph !== false && screening.status !== "REJECTED"}
             />
             <ResultPanel result={screening.result} />
           </div>

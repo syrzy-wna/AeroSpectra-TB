@@ -1,23 +1,62 @@
-import { Link } from "react-router-dom";
 import {
   AlertTriangle,
   CheckCircle2,
-  FileText,
   Flame,
   ArrowRight,
   ShieldAlert,
   Stethoscope,
   Activity,
-  Layers,
   Sparkles,
+  FileCode,
+  Layers,
+  Database,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-export const CoughResultPanel = ({ result, onProceedToCxr }) => {
+export const CoughResultPanel = ({
+  result,
+  triageOutcome,
+  onProceedToCxr,
+  onExportFhir,
+  offlineSaved,
+}) => {
   if (!result) return null;
 
+  // Handle MODUL 1: Acoustic Safety Directive #0 Rejection
+  if (result.status === "REJECTED") {
+    return (
+      <div className="space-y-4 rounded-lg border-2 border-rose-300 bg-rose-50/90 p-6 shadow-sm">
+        <div className="flex items-start gap-3.5">
+          <div className="p-2.5 rounded-lg bg-rose-600 text-white shadow-xs shrink-0">
+            <ShieldAlert className="h-6 w-6" />
+          </div>
+          <div className="space-y-1.5">
+            <span className="inline-block rounded bg-rose-700 px-2 py-0.5 text-[11px] font-mono font-bold text-white uppercase">
+              MODUL 1 · SAFETY DIRECTIVE #0: {result.error_code || "INVALID_AUDIO_INPUT"}
+            </span>
+            <h3 className="font-heading text-lg font-bold text-rose-950 leading-tight">
+              Analisis Triaj Dikunci — Isyarat Audio Ditolak (Audio Rejected)
+            </h3>
+            <p className="text-xs text-rose-900 leading-relaxed">
+              {result.message ||
+                "RALAT PENGESAHAN AKUSTIK: Isyarat audio yang dirakam menyerupai percakapan manusia (harmonik berterusan) atau deruan angin latar belakang. Sistem ini hanya memproses corak letupan batuk fisiologi yang sah untuk mengelakkan halusinasi AI."}
+            </p>
+          </div>
+        </div>
+
+        <div className="rounded-md border border-rose-200 bg-white/80 p-3 text-xs text-rose-900 space-y-1">
+          <span className="font-bold uppercase text-[10px] font-mono text-rose-700 block">
+            Tindakan Pembetulan (Corrective Action):
+          </span>
+          <p className="text-[11px]">
+            Sila pastikan persekitaran bilik tenang (&lt;45 dBA) dan minta pesakit melakukan 2–3 kali letusan batuk semula jadi ke arah mikrofon tanpa bercakap.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   const isHighRisk = result.triage_category === "HIGH_RISK_TB_SUSPECT";
-  const isModerate = result.triage_category === "MODERATE_RESPIRATORY_RISK";
 
   const categoryConfig = {
     HIGH_RISK_TB_SUSPECT: {
@@ -79,28 +118,67 @@ export const CoughResultPanel = ({ result, onProceedToCxr }) => {
         </div>
       </div>
 
-      {/* Cross-Modality Fast Track CTA Button */}
-      {isHighRisk && (
-        <div className="rounded-lg border-2 border-emerald-600 bg-emerald-50/80 p-4 shadow-xs">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="space-y-1">
-              <span className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-900 uppercase tracking-wide">
-                <Sparkles className="h-4 w-4 text-emerald-700" />
-                Langkah Saringan Seterusnya (Dual-Screening Integration)
+      {/* MODUL 2: Unified TB Triage Index Preview Card */}
+      {triageOutcome && (
+        <div className="rounded-lg border border-slate-200 bg-slate-50/80 p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Layers className="h-4 w-4 text-emerald-700" />
+              <span className="font-heading text-xs font-bold uppercase tracking-wider text-slate-800">
+                MODUL 2 · Unified TB Triage Index (Late-Fusion Engine)
               </span>
-              <p className="text-xs text-emerald-800 leading-snug">
-                Pesakit menunjukkan biomarker batuk berisiko tinggi. Teruskan serta-merta ke <strong>Saringan 1: Radiologi Dada (SPECTRA CAD CXR)</strong> untuk mengesahkan kaviti/konsolidasi apikal.
-              </p>
             </div>
-            <Link to="/" onClick={onProceedToCxr}>
-              <Button className="bg-emerald-700 hover:bg-emerald-800 text-white gap-2 text-xs font-semibold shrink-0 shadow-sm">
-                Jalankan Saringan CXR CAD Sekarang
-                <ArrowRight className="h-4 w-4" />
-              </Button>
-            </Link>
+            <span className="rounded bg-slate-900 px-2 py-0.5 font-mono text-xs font-bold text-white">
+              Index: {triageOutcome.unified_index}/100 (Multiplier x{triageOutcome.breakdown.risk_multiplier.toFixed(2)})
+            </span>
+          </div>
+          <div className="grid grid-cols-3 gap-2 text-center text-[11px]">
+            <div className="rounded border border-slate-200 bg-white p-2">
+              <span className="block text-[10px] text-slate-500 font-mono uppercase">CXR Baseline (60%)</span>
+              <span className="font-mono font-bold text-slate-800">{triageOutcome.breakdown.cxr_component} pts</span>
+            </div>
+            <div className="rounded border border-slate-200 bg-white p-2">
+              <span className="block text-[10px] text-slate-500 font-mono uppercase">Cough DSP (30%)</span>
+              <span className="font-mono font-bold text-emerald-700">{triageOutcome.breakdown.cough_component} pts</span>
+            </div>
+            <div className="rounded border border-slate-200 bg-white p-2">
+              <span className="block text-[10px] text-slate-500 font-mono uppercase">Risk Tier (10%)</span>
+              <span className="font-mono font-bold text-blue-700">
+                {triageOutcome.breakdown.demographic_weight} pts (x{triageOutcome.breakdown.risk_multiplier})
+              </span>
+            </div>
           </div>
         </div>
       )}
+
+      {/* Cross-Modality Fast Track CTA Button */}
+      <div
+        className={`rounded-lg border-2 p-4 shadow-xs ${
+          isHighRisk
+            ? "border-emerald-600 bg-emerald-50/80"
+            : "border-slate-200 bg-slate-50/70"
+        }`}
+      >
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="space-y-1">
+            <span className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-900 uppercase tracking-wide">
+              <Sparkles className="h-4 w-4 text-emerald-700" />
+              Integrasi Saringan Berkembar (Late-Fusion CXR + Batuk)
+            </span>
+            <p className="text-xs text-slate-700 leading-snug">
+              Hantar telemetri akustik batuk ini terus ke <strong>Saringan 1: Radiologi Dada (SPECTRA CAD CXR)</strong> untuk menggabungkan skor radiologi (60%) dan akustik batuk (30%).
+            </p>
+          </div>
+          <Button
+            type="button"
+            onClick={onProceedToCxr}
+            className="bg-emerald-700 hover:bg-emerald-800 text-white gap-2 text-xs font-semibold shrink-0 shadow-sm"
+          >
+            Teruskan ke Saringan CXR CAD
+            <ArrowRight className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
 
       {/* Differential Diagnoses Probabilities */}
       <div className="space-y-3">
@@ -197,6 +275,31 @@ export const CoughResultPanel = ({ result, onProceedToCxr }) => {
           </div>
         </div>
       )}
+
+      {/* MODUL 3 (HL7 FHIR Exporter) & MODUL 4 (Offline-First Status) Footer Actions */}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4">
+        <div className="flex items-center gap-2 text-[11px] text-slate-600">
+          <Database className="h-3.5 w-3.5 text-emerald-700" />
+          <span>
+            {offlineSaved
+              ? "MODUL 4 · Disimpan ke IndexedDB & Diselaraskan ke Cloud Firestore"
+              : "MODUL 4 · Sedia untuk Penyimpanan Offline-First"}
+          </span>
+        </div>
+
+        {onExportFhir && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={onExportFhir}
+            className="text-xs border-slate-300 hover:border-emerald-600 hover:text-emerald-900 gap-1.5"
+          >
+            <FileCode className="h-3.5 w-3.5 text-emerald-700" />
+            MODUL 3 · Export HL7 FHIR R4 (JSON)
+          </Button>
+        )}
+      </div>
     </div>
   );
 };

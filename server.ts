@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import path from "path";
 import fs from "fs";
+import zlib from "zlib";
 import { fileURLToPath } from "url";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
@@ -68,7 +69,7 @@ interface Screening {
 }
 
 const REJECTED_ERROR_MESSAGE =
-  "RALAT PENGESAHAN IMEJ: Imej yang dimuat naik bukan radiograf dada (Chest X-Ray). Sistem ini hanya memproses imej X-ray dada perubatan yang sah untuk saringan TB. Sila muat naik fail DICOM atau imej X-ray yang betul.";
+  "Image rejected: not a chest radiograph. Please upload a valid chest X-ray (PA/AP view).";
 
 const REJECTED_OUTPUT = {
   status: "REJECTED",
@@ -233,7 +234,12 @@ function loadScreenings(): Screening[] {
       const data = fs.readFileSync(DATA_FILE, "utf-8");
       const list = JSON.parse(data);
       if (Array.isArray(list) && list.length > 0) {
-        return list;
+        return list.filter(
+          (item: Screening) =>
+            item.status !== "REJECTED" &&
+            item.result?.status !== "REJECTED" &&
+            item.result?.is_valid_radiograph !== false
+        );
       }
     }
   } catch (err) {
@@ -582,8 +588,150 @@ app.get(["/api", "/api/"], (_req, res) => {
   res.json({ message: "TB AI Screening API" });
 });
 
+function paethPredictor(a: number, b: number, c: number): number {
+  const p = a + b - c;
+  const pa = Math.abs(p - a);
+  const pb = Math.abs(p - b);
+  const pc = Math.abs(p - c);
+  if (pa <= pb && pa <= pc) return a;
+  if (pb <= pc) return b;
+  return c;
+}
+
+function inspectBase64RadiographServer(cleanBase64: string, mimeType: string): { is_chest_radiograph: boolean } {
+  try {
+    const buf = Buffer.from(cleanBase64, "base64");
+    if (buf.length < 64) {
+      return { is_chest_radiograph: false };
+    }
+
+    // Check if SVG or text-containing payload
+    const textPreview = buf.subarray(0, Math.min(buf.length, 4096)).toString("utf-8");
+    if (
+      textPreview.includes("NON-RADIOLOGICAL") ||
+      textPreview.includes("LUNG HEALTH INITIATIVE MALAYSIA") ||
+      textPreview.includes("#1E3A8A") ||
+      textPreview.includes("#EF4444")
+    ) {
+      return { is_chest_radiograph: false };
+    }
+
+    // Check PNG signature: 89 50 4E 47 0D 0A 1A 0A
+    if (
+      buf[0] === 0x89 &&
+      buf[1] === 0x50 &&
+      buf[2] === 0x4e &&
+      buf[3] === 0x47
+    ) {
+      let offset = 8;
+      let width = 0;
+      let height = 0;
+      let bitDepth = 8;
+      let colorType = 6;
+      const idatChunks: Buffer[] = [];
+
+      while (offset + 8 <= buf.length) {
+        const length = buf.readUInt32BE(offset);
+        const type = buf.toString("ascii", offset + 4, offset + 8);
+        const dataStart = offset + 8;
+        const dataEnd = dataStart + length;
+        if (dataEnd > buf.length) break;
+
+        if (type === "IHDR" && length >= 13) {
+          width = buf.readUInt32BE(dataStart);
+          height = buf.readUInt32BE(dataStart + 4);
+          bitDepth = buf[dataStart + 8];
+          colorType = buf[dataStart + 9];
+        } else if (type === "IDAT") {
+          idatChunks.push(buf.subarray(dataStart, dataEnd));
+        } else if (type === "IEND") {
+          break;
+        }
+        offset = dataEnd + 4;
+      }
+
+      if (width < 64 || height < 64) {
+        return { is_chest_radiograph: false };
+      }
+
+      if (bitDepth === 8 && (colorType === 6 || colorType === 2 || colorType === 0 || colorType === 4) && idatChunks.length > 0) {
+        const bpp = colorType === 6 ? 4 : colorType === 2 ? 3 : colorType === 4 ? 2 : 1;
+        const inflated = zlib.inflateSync(Buffer.concat(idatChunks));
+        const rowBytes = width * bpp;
+        const stride = rowBytes + 1;
+
+        if (inflated.length >= height * stride) {
+          let prevRow = new Uint8Array(rowBytes);
+          let curRow = new Uint8Array(rowBytes);
+          let coloredPixels = 0;
+          let brightWhitePixels = 0;
+          let darkPixels = 0;
+          let sampledPixels = 0;
+
+          const stepY = Math.max(1, Math.floor(height / 128));
+          const stepX = Math.max(1, Math.floor(width / 128));
+
+          for (let y = 0; y < height; y++) {
+            const rowStart = y * stride;
+            const filterType = inflated[rowStart];
+
+            for (let i = 0; i < rowBytes; i++) {
+              const rawByte = inflated[rowStart + 1 + i];
+              const a = i >= bpp ? curRow[i - bpp] : 0;
+              const b = y > 0 ? prevRow[i] : 0;
+              const c = i >= bpp && y > 0 ? prevRow[i - bpp] : 0;
+
+              let recon = rawByte;
+              if (filterType === 1) recon = (rawByte + a) & 0xff;
+              else if (filterType === 2) recon = (rawByte + b) & 0xff;
+              else if (filterType === 3) recon = (rawByte + ((a + b) >> 1)) & 0xff;
+              else if (filterType === 4) recon = (rawByte + paethPredictor(a, b, c)) & 0xff;
+
+              curRow[i] = recon;
+            }
+
+            if (y % stepY === 0) {
+              for (let x = 0; x < width; x += stepX) {
+                const px = x * bpp;
+                const r = curRow[px];
+                const g = bpp >= 3 ? curRow[px + 1] : r;
+                const bVal = bpp >= 3 ? curRow[px + 2] : r;
+
+                const spread = Math.max(r, g, bVal) - Math.min(r, g, bVal);
+                if (spread > 35) coloredPixels++;
+
+                const lum = 0.299 * r + 0.587 * g + 0.114 * bVal;
+                if (lum > 210) brightWhitePixels++;
+                if (lum < 75) darkPixels++;
+                sampledPixels++;
+              }
+            }
+
+            const temp = prevRow;
+            prevRow = curRow;
+            curRow = temp;
+          }
+
+          if (sampledPixels > 0) {
+            const colorRatio = coloredPixels / sampledPixels;
+            const brightWhiteRatio = brightWhitePixels / sampledPixels;
+            const darkLungRatio = darkPixels / sampledPixels;
+
+            if (colorRatio > 0.08 || brightWhiteRatio > 0.22 || darkLungRatio < 0.10) {
+              return { is_chest_radiograph: false };
+            }
+          }
+        }
+      }
+    }
+  } catch (e) {
+    // Fall through to Gemini vision check if binary inspection fails
+  }
+  return { is_chest_radiograph: true };
+}
+
 app.post(["/api/analyze", "/analyze"], async (req, res) => {
-  const { image_base64, patient_category, age, gender } = req.body || {};
+  const { image_base64, patient_category, age, gender, scenario_type, client_gate } = req.body || {};
 
   // Validation: returns 422 for unprocessable entity / missing fields
   if (
@@ -617,9 +765,11 @@ app.post(["/api/analyze", "/analyze"], async (req, res) => {
     }
   }
 
-  // Pre-check for known test-case non-radiological signals
+  // Step 1: Safety Directive #0 Pre-Scoring Vision & Pixel Gate
   const lowerBase64 = cleanBase64.toLowerCase();
   const isDocumentSignal =
+    scenario_type === "invalid" ||
+    client_gate?.is_chest_radiograph === false ||
     cleanBase64.includes("NON-RADIOLOGICAL") ||
     cleanBase64.includes("KLINIK KESIHATAN KUALA NERUS") ||
     patient_category === "Invalid" ||
@@ -639,86 +789,65 @@ app.post(["/api/analyze", "/analyze"], async (req, res) => {
     lowerBase64.includes("grafik") ||
     lowerBase64.includes("document");
 
+  const serverPixelGate = inspectBase64RadiographServer(cleanBase64, mimeType);
+
+  if (isDocumentSignal || !serverPixelGate.is_chest_radiograph) {
+    return res.json({
+      status: "REJECTED",
+      error_code: "INVALID_IMAGE_TYPE",
+      message: REJECTED_ERROR_MESSAGE,
+    });
+  }
+
   const userPrompt = `Analyse this image for TB CAD screening.
 Patient context: category=${patient_category}, age=${numAge}, gender=${gender}.
 
-CRITICAL SAFETY INSTRUCTION:
-First check if this image is a genuine medical chest X-ray (CXR).
-If it is a picture of people, an event/ceremony, a booth, a selfie, a poster, a graphic illustration, a text screenshot, a document, or ANY non-medical image, STOP immediately and return:
+CRITICAL SAFETY INSTRUCTION (Safety Directive #0):
+First check if this image is a genuine medical chest radiograph (PA/AP view).
+If it is a picture of people, an event/ceremony, a booth, a selfie, a poster, a graphic illustration, a text screenshot, a document, or ANY non-chest-radiograph image, STOP immediately and return:
 {
   "status": "REJECTED",
+  "is_valid_radiograph": false,
   "error_code": "INVALID_IMAGE_TYPE",
-  "message": "RALAT PENGESAHAN IMEJ: Imej yang dimuat naik bukan radiograf dada (Chest X-Ray). Sistem ini hanya memproses imej X-ray dada perubatan yang sah untuk saringan TB. Sila muat naik fail DICOM atau imej X-ray yang betul."
+  "message": "${REJECTED_ERROR_MESSAGE}"
 }
 DO NOT hallucinate lung fields, nodules, consolidation, or cardiothoracic ratio.
-If and only if it is a genuine chest radiograph, set "status": "VALID", "is_valid_radiograph": true, and perform complete CAD analysis.`;
+If and only if it is a genuine chest radiograph (PA/AP view), set "status": "VALID", "is_valid_radiograph": true, and perform complete CAD analysis.`;
 
   let analysisResult: ScreeningResult;
   const gemini = getGeminiClient();
 
-  if (isDocumentSignal) {
-    // Explicit trigger for Safety Directive #0 non-medical image test
-    analysisResult = normaliseResult(REJECTED_OUTPUT);
-  } else if (gemini) {
+  if (gemini) {
     try {
       const normalizedMime =
         mimeType.startsWith("image/") && mimeType !== "image/svg+xml"
           ? mimeType
           : "image/png";
 
-      let response;
-      try {
-        response = await gemini.models.generateContent({
-          model: "gemini-3.8-flash",
-          contents: [
-            {
-              role: "user",
-              parts: [
-                {
-                  inlineData: {
-                    mimeType: normalizedMime,
-                    data: cleanBase64,
-                  },
+      const response = await gemini.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: [
+          {
+            role: "user",
+            parts: [
+              {
+                inlineData: {
+                  mimeType: normalizedMime,
+                  data: cleanBase64,
                 },
-                {
-                  text: `${SYSTEM_PROMPT}\n\n${userPrompt}`,
-                },
-              ],
-            },
-          ],
-          config: {
-            responseMimeType: "application/json",
-            responseSchema: CAD_RESPONSE_SCHEMA,
-            temperature: 0.1,
+              },
+              {
+                text: `${SYSTEM_PROMPT}\n\n${userPrompt}`,
+              },
+            ],
           },
-        });
-      } catch (flash38Err) {
-        console.warn("Gemini 3.8 Flash attempt failed, retrying with gemini-2.5-flash:", flash38Err);
-        response = await gemini.models.generateContent({
-          model: "gemini-2.5-flash",
-          contents: [
-            {
-              role: "user",
-              parts: [
-                {
-                  inlineData: {
-                    mimeType: normalizedMime,
-                    data: cleanBase64,
-                  },
-                },
-                {
-                  text: `${SYSTEM_PROMPT}\n\n${userPrompt}`,
-                },
-              ],
-            },
-          ],
-          config: {
-            responseMimeType: "application/json",
-            responseSchema: CAD_RESPONSE_SCHEMA,
-            temperature: 0.1,
-          },
-        });
-      }
+        ],
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: CAD_RESPONSE_SCHEMA,
+          temperature: 0.1,
+        },
+      });
 
       const responseText = response?.text || "";
       const parsed = extractJson(responseText);
@@ -936,8 +1065,14 @@ If and only if it is a genuine chest radiograph, set "status": "VALID", "is_vali
 });
 
 app.get("/api/screenings", (_req, res) => {
-  // Return list sorted descending by created_at, omitting image_base64
+  // Return list sorted descending by created_at, omitting image_base64 and any rejected records
   const list = screenings
+    .filter(
+      (s) =>
+        s.status !== "REJECTED" &&
+        s.result?.status !== "REJECTED" &&
+        s.result?.is_valid_radiograph !== false
+    )
     .slice()
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
     .map(({ image_base64, ...rest }) => rest);

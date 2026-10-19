@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { Loader2, Sparkles, RotateCcw, FileDown, ShieldCheck, BookOpen, Mic, Activity } from "lucide-react";
+import { Loader2, Sparkles, RotateCcw, FileDown, ShieldCheck, BookOpen, Mic, Activity, FileCode, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import PatientForm from "@/components/screening/PatientForm";
@@ -16,6 +16,9 @@ import { getDemoMode } from "@/lib/demoMode";
 import { NEW_SCREENING, RESULT_PANEL, DETAIL, SETTINGS } from "@/constants/testIds";
 import { LOGOS } from "@/constants/logos";
 import { syncScreeningToFirestore } from "@/lib/firebase";
+import { generateFhirReport } from "@/lib/fhirExporter";
+import { saveScreeningOffline } from "@/lib/offlineSyncManager";
+import { inspectImageRadiograph, REJECTED_CXR_MESSAGE } from "@/lib/radiographGate";
 
 const initialForm = {
   patient_category: "Patient",
@@ -119,13 +122,42 @@ const NewScreening = () => {
   const [screening, setScreening] = useState(null);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
   const [demoModeActive, setDemoModeActive] = useState(false);
+  const [linkedCoughSession, setLinkedCoughSession] = useState(null);
+  const [selectedScenario, setSelectedScenario] = useState(null);
   const printRef = useRef(null);
+
+  const isVerifiedRadiograph = Boolean(
+    screening &&
+      screening.status !== "REJECTED" &&
+      screening.result?.is_valid_radiograph !== false &&
+      screening.result?.status !== "REJECTED"
+  );
+
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem("aerotriage_cough_session");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        setLinkedCoughSession(parsed);
+        if (parsed.patient) {
+          setForm({
+            patient_category: parsed.patient.patient_category || "Patient",
+            age: String(parsed.patient.age || "42"),
+            gender: parsed.patient.gender || "Lelaki",
+          });
+        }
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }, []);
 
   const handleChange = (key, value) => setForm((f) => ({ ...f, [key]: value }));
 
   const handleReset = () => {
     setForm(initialForm);
     setImageData(null);
+    setSelectedScenario(null);
     setScreening(null);
     setError("");
   };
@@ -137,6 +169,8 @@ const NewScreening = () => {
       gender: scenario.gender,
     });
     setImageData(scenario.image_base64);
+    setSelectedScenario(scenario);
+    setScreening(null);
     setError("");
   };
 
@@ -157,65 +191,74 @@ const NewScreening = () => {
     setScreening(null);
 
     try {
+      // Step 1: Safety Directive #0 Vision & Radiograph Gate Check BEFORE any scoring
+      const gateResult = await inspectImageRadiograph(imageData);
+      const willRejectImmediately =
+        !gateResult.is_chest_radiograph || selectedScenario?.type === "invalid";
+
       const analyzeOutcome = api
         .post("/analyze", {
           image_base64: imageData,
           patient_category: form.patient_category,
           age: Number(form.age),
           gender: form.gender,
+          scenario_type: selectedScenario?.type || null,
+          client_gate: gateResult,
         })
         .then((res) => ({ ok: true, data: res.data }))
         .catch((err) => ({ ok: false, error: err }));
 
       const [outcome] = await Promise.all([
         analyzeOutcome,
-        demoMode
+        demoMode && !willRejectImmediately
           ? new Promise((resolve) => setTimeout(resolve, DEMO_MODE_DURATION_MS))
           : Promise.resolve(),
       ]);
 
-      if (!outcome.ok) throw outcome.error;
-      if (outcome.data?.status === "REJECTED") {
+      if (!outcome.ok && !willRejectImmediately) throw outcome.error;
+
+      const isRejectedResponse =
+        willRejectImmediately ||
+        outcome.data?.status === "REJECTED" ||
+        outcome.data?.result?.is_valid_radiograph === false ||
+        outcome.data?.result?.status === "REJECTED";
+
+      if (isRejectedResponse) {
+        setError(REJECTED_CXR_MESSAGE);
         setScreening({
-          id: "rejected-" + Date.now(),
+          id: null,
           status: "REJECTED",
-          error_code: outcome.data.error_code || "INVALID_IMAGE_TYPE",
-          message: outcome.data.message,
+          error_code: outcome.data?.error_code || "INVALID_IMAGE_TYPE",
+          message: REJECTED_CXR_MESSAGE,
           patient_category: form.patient_category,
           age: Number(form.age),
           gender: form.gender,
           image_base64: imageData,
           result: {
             status: "REJECTED",
-            error_code: outcome.data.error_code || "INVALID_IMAGE_TYPE",
-            message: outcome.data.message,
+            error_code: outcome.data?.error_code || "INVALID_IMAGE_TYPE",
+            message: REJECTED_CXR_MESSAGE,
             is_valid_radiograph: false,
             invalid_reason: {
-              en: "INVALID IMAGE VERIFICATION: The uploaded image is not a chest radiograph (Chest X-Ray). This system only processes valid medical chest X-ray images for TB screening. Please upload a DICOM file or authentic chest X-ray image.",
-              bm: outcome.data.message || "RALAT PENGESAHAN IMEJ: Imej yang dimuat naik bukan radiograf dada (Chest X-Ray). Sistem ini hanya memproses imej X-ray dada perubatan yang sah untuk saringan TB. Sila muat naik fail DICOM atau imej X-ray yang betul.",
+              en: REJECTED_CXR_MESSAGE,
+              bm: "RALAT PENGESAHAN IMEJ: Imej yang dimuat naik bukan radiograf dada (Chest X-Ray). Sistem ini hanya memproses imej X-ray dada perubatan (pandangan PA/AP) yang sah untuk saringan TB.",
             },
-            en: {
-              radiological_findings: [],
-              impression: ["Image rejected by safety validation: Not a genuine chest radiograph."],
-              recommendation: ["Please capture or upload an authentic digital PA chest radiograph."],
-            },
-            bm: {
-              penemuan_radiologi: [],
-              impresi: ["Imej ditolak oleh pengesahan keselamatan: Bukan radiograf dada yang sah."],
-              cadangan: ["Sila muat naik imej X-ray dada pandangan PA yang sah."],
-            },
-            severity: "NO_LESION",
-            tb_score: 0,
-            pathology_scores: { cavitation: 0, consolidation: 0, fibrosis: 0, effusion: 0, nodules: 0 },
-            is_high_confidence_normal: false,
-            incidental_findings: [],
-            annotations: [],
           },
           created_at: new Date().toISOString(),
         });
       } else {
         setScreening(outcome.data);
         syncScreeningToFirestore(outcome.data);
+        saveScreeningOffline({
+          id: outcome.data.id,
+          type: linkedCoughSession ? "DUAL" : "CXR",
+          patient_category: outcome.data.patient_category,
+          age: outcome.data.age,
+          gender: outcome.data.gender,
+          result: outcome.data.result,
+          created_at: outcome.data.created_at,
+          facility: "Pejabat Kesihatan Daerah Kuala Nerus · KKM",
+        }).catch(() => {});
       }
     } catch (e) {
       setError(
@@ -237,6 +280,42 @@ const NewScreening = () => {
     } finally {
       setDownloadingPdf(false);
     }
+  };
+
+  const handleExportFhir = () => {
+    if (!screening) return;
+    const fhirBundle = generateFhirReport(
+      {
+        id: screening.id,
+        age: screening.age,
+        gender: screening.gender,
+        patient_category: screening.patient_category,
+      },
+      screening.result?.tb_score || 50,
+      {
+        screening_id: screening.id,
+        timestamp: screening.created_at,
+        cxr_score: screening.result?.tb_score || 0,
+        cxr_severity: screening.result?.severity || "NO_LESION",
+        pathology_scores: screening.result?.pathology_scores,
+        cough_peak_hz: linkedCoughSession?.dsp?.peak_frequency_hz || 310,
+        cough_wetness_index: linkedCoughSession?.dsp?.cough_wetness_index || 75,
+        radiological_impression:
+          screening.result?.en?.impression || screening.result?.bm?.impresi,
+        cpg_recommendations:
+          screening.result?.en?.recommendation || screening.result?.bm?.cadangan,
+      }
+    );
+
+    const blob = new Blob([JSON.stringify(fhirBundle, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `fhir-report-${screening.id.slice(0, 8)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -298,6 +377,30 @@ const NewScreening = () => {
             DUA SARINGAN BERSEPADU DALAM SATU APLIKASI
           </span>
         </div>
+
+        {linkedCoughSession?.dsp && (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-emerald-200 bg-emerald-50/70 px-3 py-2 text-xs text-emerald-950">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="h-4 w-4 text-emerald-700 shrink-0" />
+              <span>
+                <strong>MODUL 2 Late-Fusion Aktif:</strong> Biopenanda Batuk Saringan 2 Dipautkan (Peak:{" "}
+                <span className="font-mono font-bold">{linkedCoughSession.dsp.peak_frequency_hz} Hz</span> · Wetness:{" "}
+                <span className="font-mono font-bold">{linkedCoughSession.dsp.cough_wetness_index}%</span> · Bursts:{" "}
+                <span className="font-mono font-bold">{linkedCoughSession.dsp.cough_burst_count || 2}</span>)
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                sessionStorage.removeItem("aerotriage_cough_session");
+                setLinkedCoughSession(null);
+              }}
+              className="text-[11px] font-semibold text-emerald-800 hover:underline"
+            >
+              Padam Pautan
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
@@ -335,16 +438,28 @@ const NewScreening = () => {
             </p>
             <XrayUpload
               imageData={imageData}
-              onImageSelected={setImageData}
-              onImageRemoved={() => setImageData(null)}
+              onImageSelected={(img) => {
+                setImageData(img);
+                setSelectedScenario(null);
+                setScreening(null);
+                setError("");
+              }}
+              onImageRemoved={() => {
+                setImageData(null);
+                setSelectedScenario(null);
+                setScreening(null);
+                setError("");
+              }}
               disabled={loading}
+              isVerified={isVerifiedRadiograph}
             />
           </div>
 
           {error && (
             <div
               data-testid={NEW_SCREENING.errorAlert}
-              className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
+              role="alert"
+              className="rounded-md border border-red-300 bg-red-50 px-3.5 py-2.5 text-sm font-semibold text-red-800 shadow-2xs"
             >
               {error}
             </div>
@@ -386,39 +501,58 @@ const NewScreening = () => {
             <>
               <XrayViewer
                 imageSrc={imageData}
-                annotations={screening.result.annotations}
+                annotations={isVerifiedRadiograph ? screening.result?.annotations || [] : []}
+                isVerified={isVerifiedRadiograph}
               />
-              <ResultPanel result={screening.result} />
-              <div className="flex flex-wrap items-center gap-3">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  data-testid={DETAIL.downloadPdfButton}
-                  onClick={handleDownloadPdf}
-                  disabled={downloadingPdf}
-                >
-                  {downloadingPdf ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : (
-                    <FileDown className="mr-2 h-4 w-4" />
-                  )}
-                  Download Official PDF Report
-                </Button>
-                <Button
-                  variant="link"
-                  className="px-0 text-emerald-700"
-                  data-testid={RESULT_PANEL.viewInHistoryLink}
-                  onClick={() => navigate(`/screening/${screening.id}`)}
-                >
-                  View full record in history &rarr;
-                </Button>
-              </div>
-              <div style={{ position: "fixed", left: "-99999px", top: 0 }} aria-hidden="true">
-                <PrintableReport
-                  ref={printRef}
-                  screening={{ ...screening, image_base64: imageData }}
-                />
-              </div>
+              <ResultPanel
+                result={screening.result}
+                patientCategory={form.patient_category}
+                coughDsp={linkedCoughSession?.dsp}
+              />
+              {isVerifiedRadiograph && screening.id && (
+                <>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      data-testid={DETAIL.downloadPdfButton}
+                      onClick={handleDownloadPdf}
+                      disabled={downloadingPdf}
+                    >
+                      {downloadingPdf ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <FileDown className="mr-2 h-4 w-4" />
+                      )}
+                      Download Official PDF Report
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleExportFhir}
+                      className="text-xs border-slate-300 hover:border-emerald-600 hover:text-emerald-900"
+                      title="Eksport Laporan Standard Interoperabiliti HL7 FHIR R4 JSON"
+                    >
+                      <FileCode className="mr-2 h-4 w-4 text-emerald-700" />
+                      MODUL 3 · Export HL7 FHIR R4 (JSON)
+                    </Button>
+                    <Button
+                      variant="link"
+                      className="px-0 text-emerald-700"
+                      data-testid={RESULT_PANEL.viewInHistoryLink}
+                      onClick={() => navigate(`/screening/${screening.id}`)}
+                    >
+                      View full record in history &rarr;
+                    </Button>
+                  </div>
+                  <div style={{ position: "fixed", left: "-99999px", top: 0 }} aria-hidden="true">
+                    <PrintableReport
+                      ref={printRef}
+                      screening={{ ...screening, image_base64: imageData }}
+                    />
+                  </div>
+                </>
+              )}
             </>
           )}
 

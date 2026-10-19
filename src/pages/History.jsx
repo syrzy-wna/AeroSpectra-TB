@@ -28,7 +28,14 @@ const History = () => {
       .catch(() => setScreenings([]));
   }, []);
 
-  const filteredScreenings = (screenings || []).filter((s) => {
+  const validScreenings = (screenings || []).filter(
+    (s) =>
+      s.status !== "REJECTED" &&
+      s.result?.status !== "REJECTED" &&
+      s.result?.is_valid_radiograph !== false
+  );
+
+  const filteredScreenings = validScreenings.filter((s) => {
     const matchesSearch =
       s.patient_category.toLowerCase().includes(searchTerm.toLowerCase()) ||
       s.gender.toLowerCase().includes(searchTerm.toLowerCase()) ||

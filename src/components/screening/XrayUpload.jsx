@@ -3,7 +3,7 @@ import { UploadCloud, FileImage, X, AlertCircle, Camera } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { NEW_SCREENING } from "@/constants/testIds";
 
-const XrayUpload = ({ imageData, onImageSelected, onImageRemoved, disabled }) => {
+const XrayUpload = ({ imageData, onImageSelected, onImageRemoved, disabled, isVerified = false }) => {
   const fileInputRef = useRef(null);
   const cameraInputRef = useRef(null);
   const [dragOver, setDragOver] = useState(false);
@@ -84,9 +84,18 @@ const XrayUpload = ({ imageData, onImageSelected, onImageRemoved, disabled }) =>
           <div className="relative flex max-h-[260px] items-center justify-center overflow-hidden rounded bg-black">
             <img
               src={imageData}
-              alt="Uploaded Chest Radiograph Preview"
+              alt={isVerified ? "Verified Chest Radiograph Preview" : "Unverified Input Preview"}
               className="max-h-[250px] w-auto object-contain"
             />
+            <span
+              className={`pointer-events-none absolute top-2 left-2 rounded px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider shadow ${
+                isVerified
+                  ? "bg-emerald-900/90 text-emerald-200 border border-emerald-600/60"
+                  : "bg-amber-950/90 text-amber-300 border border-amber-500/60"
+              }`}
+            >
+              {isVerified ? "VIEWPORT // DICOM CXR" : "UNVERIFIED INPUT"}
+            </span>
             <Button
               type="button"
               variant="destructive"
@@ -102,8 +111,8 @@ const XrayUpload = ({ imageData, onImageSelected, onImageRemoved, disabled }) =>
           </div>
           <div className="mt-2 flex items-center justify-between px-2 text-xs text-slate-400">
             <span className="flex items-center gap-1.5 font-mono">
-              <FileImage className="h-3.5 w-3.5 text-emerald-400" />
-              Image Loaded & Validated (JPEG/PNG/WEBP)
+              <FileImage className={`h-3.5 w-3.5 ${isVerified ? "text-emerald-400" : "text-amber-400"}`} />
+              {isVerified ? "PA VIEW · DIGITAL RADIOGRAPHY" : "UNVERIFIED INPUT"}
             </span>
             <div className="flex items-center gap-3">
               <button

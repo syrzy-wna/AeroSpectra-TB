@@ -3,7 +3,14 @@ import { SEVERITY_CONFIG } from "@/constants/screening";
 import { LOGOS } from "@/constants/logos";
 
 const PrintableReport = React.forwardRef(({ screening }, ref) => {
-  if (!screening) return null;
+  if (
+    !screening ||
+    screening.status === "REJECTED" ||
+    screening.result?.status === "REJECTED" ||
+    screening.result?.is_valid_radiograph === false
+  ) {
+    return null;
+  }
 
   const result = screening.result || {};
   const en = result.en || {};

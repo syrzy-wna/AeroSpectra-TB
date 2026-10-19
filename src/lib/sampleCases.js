@@ -255,10 +255,9 @@ export function generateSyntheticCxr(type = "normal") {
           }
         }
 
-        // HUD metadata watermark
+        // Anatomical orientation marker only (PA VIEW watermark rendered by XrayViewer only after passing gate)
         ctx.fillStyle = "rgba(148, 163, 184, 0.6)";
         ctx.font = "11px monospace";
-        ctx.fillText("PA VIEW · DIGITAL RADIOGRAPHY · CAD 2026", 20, 620);
         ctx.fillText("R", 50, 140);
 
         ctx.restore();
@@ -586,10 +585,10 @@ export const DEMO_SCENARIOS = [
     expectedResult: {
       status: "REJECTED",
       error_code: "INVALID_IMAGE_TYPE",
-      message: "RALAT PENGESAHAN IMEJ: Imej yang dimuat naik bukan radiograf dada (Chest X-Ray). Sistem ini hanya memproses imej X-ray dada perubatan yang sah untuk saringan TB. Sila muat naik fail DICOM atau imej X-ray yang betul.",
+      message: "Image rejected: not a chest radiograph. Please upload a valid chest X-ray (PA/AP view).",
       is_valid_radiograph: false,
       invalid_reason: {
-        en: "IMAGE VALIDATION ERROR: The uploaded image is not a chest radiograph (Chest X-Ray). This system only processes valid medical chest X-ray images for TB screening. Please upload a DICOM file or authentic chest X-ray image.",
+        en: "Image rejected: not a chest radiograph. Please upload a valid chest X-ray (PA/AP view).",
         bm: "RALAT PENGESAHAN IMEJ: Imej yang dimuat naik bukan radiograf dada (Chest X-Ray). Sistem ini hanya memproses imej X-ray dada perubatan yang sah untuk saringan TB. Sila muat naik fail DICOM atau imej X-ray yang betul.",
       },
       en: {
