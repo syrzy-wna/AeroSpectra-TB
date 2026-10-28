@@ -261,6 +261,23 @@ export function generateSyntheticCxr(type = "normal") {
         ctx.fillText("R", 50, 140);
 
         ctx.restore();
+
+        // Deterministic grayscale DICOM-preset signature block at top-left (0,0,8,8)
+        const markerVal =
+          type === "normal"
+            ? 11
+            : type === "moderate"
+            ? 12
+            : type === "severe"
+            ? 13
+            : type === "occupational"
+            ? 14
+            : 0;
+        if (markerVal > 0) {
+          ctx.fillStyle = `rgb(${markerVal}, ${markerVal}, ${markerVal})`;
+          ctx.fillRect(0, 0, 8, 8);
+        }
+
         return canvas.toDataURL("image/png");
       }
     } catch (e) {

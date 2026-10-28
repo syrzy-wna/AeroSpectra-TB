@@ -213,7 +213,20 @@ const ScreeningDetail = () => {
             <ResultPanel result={screening.result} />
           </div>
 
-          <div style={{ position: "fixed", left: "-99999px", top: 0 }} aria-hidden="true">
+          <div
+            style={{
+              position: "fixed",
+              left: 0,
+              top: 0,
+              width: "794px",
+              height: 0,
+              overflow: "hidden",
+              opacity: 0,
+              pointerEvents: "none",
+              zIndex: -9999,
+            }}
+            aria-hidden="true"
+          >
             <PrintableReport ref={printRef} screening={screening} />
           </div>
         </>

@@ -13,26 +13,46 @@ import SeverityBadge from "@/components/screening/SeverityBadge";
 import ScoreCircle from "@/components/screening/ScoreCircle";
 import api from "@/lib/api";
 import { HISTORY } from "@/constants/testIds";
-import { Search, Filter, ShieldCheck, Activity } from "lucide-react";
+import { Search, Filter, ShieldCheck, Activity, Trash2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { clearLocalScreeningHistory } from "@/lib/accessControl";
 
 const History = () => {
   const navigate = useNavigate();
   const [screenings, setScreenings] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [severityFilter, setSeverityFilter] = useState("ALL");
+  const [clearing, setClearing] = useState(false);
 
   useEffect(() => {
     api
       .get("/screenings")
       .then(({ data }) => setScreenings(data))
       .catch(() => setScreenings([]));
+
+    const onCleared = () => setScreenings([]);
+    window.addEventListener("spectra:history-cleared", onCleared);
+    return () => window.removeEventListener("spectra:history-cleared", onCleared);
   }, []);
+
+  const handleClearLocal = async () => {
+    setClearing(true);
+    try {
+      await clearLocalScreeningHistory();
+      setScreenings([]);
+    } finally {
+      setClearing(false);
+    }
+  };
 
   const validScreenings = (screenings || []).filter(
     (s) =>
       s.status !== "REJECTED" &&
+      s.status !== "INCONCLUSIVE" &&
       s.result?.status !== "REJECTED" &&
-      s.result?.is_valid_radiograph !== false
+      s.result?.status !== "INCONCLUSIVE" &&
+      s.result?.is_valid_radiograph !== false &&
+      !s.result?.is_inconclusive
   );
 
   const filteredScreenings = validScreenings.filter((s) => {
@@ -59,10 +79,22 @@ const History = () => {
             Audit trail of chest X-ray CAD evaluations, stratified by MaHTAS severity score.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-3">
           <span className="font-mono text-xs text-muted-foreground">
-            {screenings ? `${screenings.length} records archived` : "Loading archive..."}
+            {screenings ? `${validScreenings.length} records archived` : "Loading archive..."}
           </span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            data-testid="history-clear-local-button"
+            onClick={handleClearLocal}
+            disabled={clearing || validScreenings.length === 0}
+            className="h-8 text-xs border-slate-300 text-slate-700 hover:bg-rose-50 hover:text-rose-700 hover:border-rose-300"
+          >
+            <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+            {clearing ? "Clearing..." : "Clear local history"}
+          </Button>
         </div>
       </div>
 

@@ -1,7 +1,14 @@
-import { AlertTriangle, ShieldAlert } from "lucide-react";
+import { AlertTriangle, ShieldAlert, ShieldCheck, Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { RESULT_PANEL } from "@/constants/testIds";
 
-const InvalidImageBanner = ({ invalidReason, message, errorCode }) => {
+const InvalidImageBanner = ({
+  invalidReason,
+  message,
+  errorCode,
+  onOverride,
+  overriding = false,
+}) => {
   const primaryRejectionMessage =
     "Image rejected: not a chest radiograph. Please upload a valid chest X-ray (PA/AP view).";
 
@@ -25,7 +32,7 @@ const InvalidImageBanner = ({ invalidReason, message, errorCode }) => {
         <div className="space-y-2 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <h4 className="font-heading text-sm font-bold uppercase tracking-wider text-red-950">
-              SAFETY DIRECTIVE #0 · STATUS: REJECTED
+              SAFETY DIRECTIVE #0 / #4 · STATUS: REJECTED
             </h4>
             <span className="rounded bg-red-200 px-2 py-0.5 text-[11px] font-mono font-bold text-red-900 border border-red-300">
               {code}
@@ -45,14 +52,40 @@ const InvalidImageBanner = ({ invalidReason, message, errorCode }) => {
         </div>
       </div>
 
-      <div className="rounded-md border border-red-200/80 bg-white/70 p-3 text-xs text-red-900">
-        <div className="flex items-center gap-1.5 font-semibold text-red-950">
-          <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
-          Zero-Hallucination Clinical Safety Gate (Safety Directive #0):
+      <div className="rounded-md border border-red-200/80 bg-white/70 p-3 text-xs text-red-900 space-y-3">
+        <div>
+          <div className="flex items-center gap-1.5 font-semibold text-red-950">
+            <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
+            Zero-Hallucination Clinical Safety Gate (Safety Directive #0 / #4):
+          </div>
+          <p className="mt-0.5 text-muted-foreground text-[11px]">
+            Non-radiological images (documents, signage, photographs, selfies, posters) are blocked immediately prior to CAD scoring. If this image is a valid clinical chest radiograph with atypical contrast, borders, or severe pathology, use Clinician Override below.
+          </p>
         </div>
-        <p className="mt-0.5 text-muted-foreground text-[11px]">
-          Non-radiological images (documents, signage, photographs, selfies, posters) are blocked immediately prior to CAD scoring. No TB score, no radiological findings, and no clinical history records are generated.
-        </p>
+
+        {onOverride && (
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-red-200/80 pt-2.5">
+            <span className="text-[11px] font-medium text-red-900">
+              Is this a valid PA/AP chest radiograph that was flagged in error?
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              data-testid="clinician-override-button"
+              onClick={onOverride}
+              disabled={overriding}
+              className="border-amber-600 bg-amber-50 text-amber-950 hover:bg-amber-100 hover:text-amber-950 font-semibold text-xs whitespace-nowrap shrink-0"
+            >
+              {overriding ? (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <ShieldCheck className="mr-1.5 h-3.5 w-3.5 text-amber-700" />
+              )}
+              Override &amp; Analyze Anyway (Clinician Override)
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );

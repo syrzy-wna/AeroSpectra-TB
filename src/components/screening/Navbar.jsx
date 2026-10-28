@@ -1,8 +1,9 @@
 import { Link, useLocation } from "react-router-dom";
-import { Activity, History, Settings, Sparkles, BookOpen, Mic } from "lucide-react";
+import { Activity, History, Settings, Sparkles, BookOpen, Mic, Lock } from "lucide-react";
 import { useDemoMode } from "@/lib/demoMode";
 import { SETTINGS } from "@/constants/testIds";
 import { LOGOS } from "@/constants/logos";
+import { lockSession } from "@/lib/accessControl";
 
 const Navbar = () => {
   const location = useLocation();
@@ -84,7 +85,7 @@ const Navbar = () => {
         </nav>
 
         {/* Zone 3: Single Primary Status/Affordance */}
-        <div className="flex items-center gap-3 shrink-0">
+        <div className="flex items-center gap-2.5 shrink-0">
           {demoMode ? (
             <span
               data-testid={SETTINGS.demoModeBadge}
@@ -99,6 +100,17 @@ const Navbar = () => {
               <span>CAD READY</span>
             </div>
           )}
+
+          <button
+            type="button"
+            data-testid="navbar-lock-button"
+            onClick={lockSession}
+            className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100 transition-colors"
+            title="Lock Session (Require Owner Passcode)"
+          >
+            <Lock className="h-3.5 w-3.5 text-slate-600" />
+            <span className="hidden sm:inline">Lock</span>
+          </button>
 
           {/* Mobile Navigation Trigger Links */}
           <div className="flex md:hidden items-center gap-3">

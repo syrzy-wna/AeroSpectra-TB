@@ -1,0 +1,6 @@
+{
+  "summary":  "Implementation plan for relaxing Safety Directive #0 / #4 Chest X-ray vision validation, removing restrictive client/server heuristics, and adding a Clinician Override fallback button that forces full Tuberculosis CAD analysis and saves results to History.",
+  "updatedAt":  "2026-10-28T16:50:24.636937549Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}

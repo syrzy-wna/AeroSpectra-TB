@@ -8,7 +8,9 @@
     "image_base64": "",
     "result": {
       "status": "VALID",
+      "image_tier": "TIER_1_CHEST_XRAY",
       "is_valid_radiograph": true,
+      "is_non_chest_xray": false,
       "invalid_reason": null,
       "en": {
         "radiological_findings": [
@@ -49,7 +51,7 @@
       "incidental_findings": [],
       "annotations": []
     },
-    "created_at": "2026-04-12T06:00:00.000Z"
+    "created_at": "2026-10-19T03:00:00.000Z"
   },
   {
     "id": "sc-seeded-002",
@@ -60,7 +62,9 @@
     "image_base64": "",
     "result": {
       "status": "VALID",
+      "image_tier": "TIER_1_CHEST_XRAY",
       "is_valid_radiograph": true,
+      "is_non_chest_xray": false,
       "invalid_reason": null,
       "en": {
         "radiological_findings": [
@@ -108,11 +112,16 @@
       "annotations": [
         {
           "label": "RUL Consolidation & Infiltrates",
-          "box_2d": [180, 500, 420, 780]
+          "box_2d": [
+            180,
+            500,
+            420,
+            780
+          ]
         }
       ]
     },
-    "created_at": "2026-04-12T04:00:00.000Z"
+    "created_at": "2026-10-18T23:00:00.000Z"
   },
   {
     "id": "sc-seeded-003",
@@ -123,7 +132,9 @@
     "image_base64": "",
     "result": {
       "status": "VALID",
+      "image_tier": "TIER_1_CHEST_XRAY",
       "is_valid_radiograph": true,
+      "is_non_chest_xray": false,
       "invalid_reason": null,
       "en": {
         "radiological_findings": [
@@ -172,10 +183,15 @@
       "annotations": [
         {
           "label": "Thick-Walled Cavity & Consolidation",
-          "box_2d": [150, 480, 420, 810]
+          "box_2d": [
+            150,
+            480,
+            420,
+            810
+          ]
         }
       ]
     },
-    "created_at": "2026-04-11T10:00:00.000Z"
+    "created_at": "2026-10-18T05:00:00.000Z"
   }
 ]

@@ -18,7 +18,11 @@ import { LOGOS } from "@/constants/logos";
 import { syncScreeningToFirestore } from "@/lib/firebase";
 import { generateFhirReport } from "@/lib/fhirExporter";
 import { saveScreeningOffline } from "@/lib/offlineSyncManager";
-import { inspectImageRadiograph, REJECTED_CXR_MESSAGE } from "@/lib/radiographGate";
+import {
+  inspectImageRadiograph,
+  REJECTED_CXR_MESSAGE,
+  INCONCLUSIVE_CXR_MESSAGE,
+} from "@/lib/radiographGate";
 
 const initialForm = {
   patient_category: "Patient",
@@ -129,8 +133,16 @@ const NewScreening = () => {
   const isVerifiedRadiograph = Boolean(
     screening &&
       screening.status !== "REJECTED" &&
+      screening.status !== "INCONCLUSIVE" &&
+      screening.status !== "NON_CHEST_XRAY" &&
+      screening.image_tier !== "TIER_2_NON_CHEST_XRAY" &&
       screening.result?.is_valid_radiograph !== false &&
-      screening.result?.status !== "REJECTED"
+      screening.result?.status !== "REJECTED" &&
+      screening.result?.status !== "INCONCLUSIVE" &&
+      screening.result?.status !== "NON_CHEST_XRAY" &&
+      screening.result?.image_tier !== "TIER_2_NON_CHEST_XRAY" &&
+      !screening.result?.is_non_chest_xray &&
+      !screening.result?.is_inconclusive
   );
 
   useEffect(() => {
@@ -174,7 +186,8 @@ const NewScreening = () => {
     setError("");
   };
 
-  const handleAnalyze = async () => {
+  const handleAnalyze = async (options = {}) => {
+    const forceOverride = Boolean(options?.forceOverride);
     setError("");
     if (!imageData) {
       setError("Please upload or select a chest X-ray image first.");
@@ -191,10 +204,38 @@ const NewScreening = () => {
     setScreening(null);
 
     try {
-      // Step 1: Safety Directive #0 Vision & Radiograph Gate Check BEFORE any scoring
-      const gateResult = await inspectImageRadiograph(imageData);
+      const isBuiltinValidPreset =
+        ["normal", "moderate", "severe", "occupational"].includes(
+          selectedScenario?.type
+        ) ||
+        [
+          "scenario-normal",
+          "scenario-moderate",
+          "scenario-severe",
+          "scenario-occupational",
+        ].includes(selectedScenario?.id);
+
+      // Safety Directive #0 / #4 vision gate applies ONLY to user-uploaded images and Scenario E (never to built-in presets A–D or when Clinician Override is active)
+      const gateResult = isBuiltinValidPreset
+        ? {
+            is_chest_radiograph: true,
+            is_inconclusive_quality: false,
+            detected_preset: selectedScenario.type,
+            tier: "TIER_1_CHEST_XRAY",
+            reason: "Built-in clinical scenario preset A–D",
+          }
+        : await inspectImageRadiograph(imageData, { forceOverride });
+
+      const effectiveScenarioType = forceOverride
+        ? isBuiltinValidPreset
+          ? selectedScenario?.type
+          : null
+        : selectedScenario?.type || gateResult.detected_preset || null;
+
       const willRejectImmediately =
-        !gateResult.is_chest_radiograph || selectedScenario?.type === "invalid";
+        !forceOverride &&
+        !isBuiltinValidPreset &&
+        (!gateResult.is_chest_radiograph || effectiveScenarioType === "invalid");
 
       const analyzeOutcome = api
         .post("/analyze", {
@@ -202,7 +243,10 @@ const NewScreening = () => {
           patient_category: form.patient_category,
           age: Number(form.age),
           gender: form.gender,
-          scenario_type: selectedScenario?.type || null,
+          scenario_id: forceOverride && !isBuiltinValidPreset ? null : selectedScenario?.id || null,
+          scenario_type: effectiveScenarioType,
+          is_builtin_preset: isBuiltinValidPreset,
+          force_override: forceOverride,
           client_gate: gateResult,
         })
         .then((res) => ({ ok: true, data: res.data }))
@@ -210,24 +254,77 @@ const NewScreening = () => {
 
       const [outcome] = await Promise.all([
         analyzeOutcome,
-        demoMode && !willRejectImmediately
+        demoMode && !willRejectImmediately && !forceOverride
           ? new Promise((resolve) => setTimeout(resolve, DEMO_MODE_DURATION_MS))
           : Promise.resolve(),
       ]);
 
       if (!outcome.ok && !willRejectImmediately) throw outcome.error;
 
-      const isRejectedResponse =
-        willRejectImmediately ||
-        outcome.data?.status === "REJECTED" ||
-        outcome.data?.result?.is_valid_radiograph === false ||
-        outcome.data?.result?.status === "REJECTED";
+      const isNonChestXrayResponse =
+        !forceOverride &&
+        !isBuiltinValidPreset &&
+        !willRejectImmediately &&
+        (outcome.data?.status === "NON_CHEST_XRAY" ||
+          outcome.data?.image_tier === "TIER_2_NON_CHEST_XRAY" ||
+          outcome.data?.is_non_chest_xray ||
+          outcome.data?.result?.status === "NON_CHEST_XRAY" ||
+          outcome.data?.result?.image_tier === "TIER_2_NON_CHEST_XRAY" ||
+          outcome.data?.result?.is_non_chest_xray);
 
-      if (isRejectedResponse) {
+      const isInconclusiveResponse =
+        !forceOverride &&
+        !isBuiltinValidPreset &&
+        !willRejectImmediately &&
+        !isNonChestXrayResponse &&
+        (outcome.data?.status === "INCONCLUSIVE" ||
+          outcome.data?.result?.status === "INCONCLUSIVE" ||
+          outcome.data?.result?.is_inconclusive);
+
+      const isRejectedResponse =
+        !forceOverride &&
+        !isBuiltinValidPreset &&
+        !isNonChestXrayResponse &&
+        !isInconclusiveResponse &&
+        (willRejectImmediately ||
+          outcome.data?.status === "REJECTED" ||
+          outcome.data?.image_tier === "TIER_3_NOT_XRAY" ||
+          outcome.data?.result?.is_valid_radiograph === false ||
+          outcome.data?.result?.status === "REJECTED");
+
+      if (isNonChestXrayResponse) {
+        // TIER 2 — X-RAY BUT NOT CHEST: Accept into limited mode (findings only, no TB score, nothing written to History)
+        setError("");
+        setScreening(outcome.data);
+      } else if (isInconclusiveResponse) {
+        const inconclusiveMsg =
+          outcome.data?.message || INCONCLUSIVE_CXR_MESSAGE;
+        setError(inconclusiveMsg);
+        setScreening({
+          id: null,
+          status: "INCONCLUSIVE",
+          error_code: outcome.data?.error_code || "INCONCLUSIVE_IMAGE_QUALITY",
+          message: inconclusiveMsg,
+          patient_category: form.patient_category,
+          age: Number(form.age),
+          gender: form.gender,
+          image_base64: imageData,
+          result: {
+            status: "INCONCLUSIVE",
+            is_inconclusive: true,
+            is_valid_radiograph: true,
+            error_code: outcome.data?.error_code || "INCONCLUSIVE_IMAGE_QUALITY",
+            message: inconclusiveMsg,
+          },
+          created_at: new Date().toISOString(),
+        });
+      } else if (isRejectedResponse) {
+        // TIER 3 — NOT AN X-RAY: Reject immediately with red banner
         setError(REJECTED_CXR_MESSAGE);
         setScreening({
           id: null,
           status: "REJECTED",
+          image_tier: "TIER_3_NOT_XRAY",
           error_code: outcome.data?.error_code || "INVALID_IMAGE_TYPE",
           message: REJECTED_CXR_MESSAGE,
           patient_category: form.patient_category,
@@ -236,6 +333,7 @@ const NewScreening = () => {
           image_base64: imageData,
           result: {
             status: "REJECTED",
+            image_tier: "TIER_3_NOT_XRAY",
             error_code: outcome.data?.error_code || "INVALID_IMAGE_TYPE",
             message: REJECTED_CXR_MESSAGE,
             is_valid_radiograph: false,
@@ -247,6 +345,8 @@ const NewScreening = () => {
           created_at: new Date().toISOString(),
         });
       } else {
+        // TIER 1 — CHEST X-RAY (or Clinician Override): Full CAD pipeline + save to History
+        setError("");
         setScreening(outcome.data);
         syncScreeningToFirestore(outcome.data);
         saveScreeningOffline({
@@ -267,6 +367,10 @@ const NewScreening = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleClinicianOverride = () => {
+    handleAnalyze({ forceOverride: true });
   };
 
   const handleDownloadPdf = async () => {
@@ -470,7 +574,7 @@ const NewScreening = () => {
               type="button"
               className="flex-1 bg-emerald-700 hover:bg-emerald-800 text-white"
               data-testid={NEW_SCREENING.analyzeButton}
-              onClick={handleAnalyze}
+              onClick={() => handleAnalyze()}
               disabled={loading}
             >
               {loading ? (
@@ -508,6 +612,8 @@ const NewScreening = () => {
                 result={screening.result}
                 patientCategory={form.patient_category}
                 coughDsp={linkedCoughSession?.dsp}
+                onOverride={handleClinicianOverride}
+                overriding={loading}
               />
               {isVerifiedRadiograph && screening.id && (
                 <>
@@ -545,7 +651,20 @@ const NewScreening = () => {
                       View full record in history &rarr;
                     </Button>
                   </div>
-                  <div style={{ position: "fixed", left: "-99999px", top: 0 }} aria-hidden="true">
+                  <div
+                    style={{
+                      position: "fixed",
+                      left: 0,
+                      top: 0,
+                      width: "794px",
+                      height: 0,
+                      overflow: "hidden",
+                      opacity: 0,
+                      pointerEvents: "none",
+                      zIndex: -9999,
+                    }}
+                    aria-hidden="true"
+                  >
                     <PrintableReport
                       ref={printRef}
                       screening={{ ...screening, image_base64: imageData }}
